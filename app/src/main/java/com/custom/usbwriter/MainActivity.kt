@@ -68,8 +68,8 @@ private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
     try {
         device.init() // Инициализируем прямой доступ к секторам флешки
         
-        // Правильный доступ к физическому блочному устройству всего диска
-        val blockDevice = device.blockDevice
+        // Явный вызов метода getBlockDevices() обходит любые проблемы свойствами в Kotlin
+        val blockDevice = device.getBlockDevices()[0]
 
         // Открываем вшитый в приложение архив загрузчика Ventoy
         val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
@@ -94,6 +94,7 @@ private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
         runOnUiThread { statusText.text = "Ошибка записи: ${e.message}" }
     }
 }
+
 
 
     // Метод для прямой переброски ISO-файла во второй раздел флешки
