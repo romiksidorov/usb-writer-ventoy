@@ -271,20 +271,25 @@ class MainActivity : AppCompatActivity() {
                 }
                 device.init()
 
-                val blockDevice = device.blockDevices[0]
-                val blockSize = blockDevice.blockSize
+                // Прямое обращение к единственному блочному устройству
+                val blockDevice = device.blockDevice
+                val blockSize = blockDevice.blockSize.toLong() // Приведение к Long для исключения двусмысленности типов LBA
                 val totalBlocks = blockDevice.size
 
                 val assetList = assets.list("") ?: emptyArray()
                 if (assetList.contains("ventoy_disk.img")) {
                     val imgStream = assets.open("ventoy_disk.img")
-                    val buffer = ByteArray(blockSize * 128)
+                    val buffer = ByteArray((blockSize * 128).toInt())
                     var currentBlockOffset = 0L
                     var bytesRead: Int
 
                     while (imgStream.read(buffer).also { bytesRead = it } != -1) {
-                        val alignedSize = if (bytesRead % blockSize == 0) bytesRead else ((bytesRead / blockSize) + 1) * blockSize
-                        val writeBuf = ByteBuffer.allocate(alignedSize)
+                        val alignedSize = if (bytesRead.toLong() % blockSize == 0L) {
+                            bytesRead.toLong()
+                        } else {
+                            ((bytesRead.toLong() / blockSize) + 1L) * blockSize
+                        }
+                        val writeBuf = ByteBuffer.allocate(alignedSize.toInt())
                         writeBuf.put(buffer, 0, bytesRead)
                         writeBuf.position(0)
 
@@ -294,7 +299,7 @@ class MainActivity : AppCompatActivity() {
                     imgStream.close()
                 }
 
-                val mbrBuffer = ByteBuffer.allocate(blockSize)
+                val mbrBuffer = ByteBuffer.allocate(blockSize.toInt())
                 blockDevice.read(0, mbrBuffer)
                 val mbr = mbrBuffer.array()
 
@@ -325,4 +330,85 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        
+    }
+
+    private fun writeMbrPartitionEntry(
+        mbr: ByteArray,
+        offset: Int,
+        status: Byte,
+        type: Byte,
+        lbaStart: Int,
+        sectorCount: Int
+    ) {
+        mbr[offset] = status
+        mbr[offset + 1] = 0xFE.toByte()
+        mbr[offset + 2] = 0xFF.toByte()
+        mbr[offset + 3] = 0xFF.toByte()
+        mbr[offset + 4] = type
+        mbr[offset + 5] = 0xFE.toByte()
+        mbr[offset + 6] = 0xFF.toByte()
+        mbr[offset + 7] = 0xFF.toByte()
+        mbr[offset + 8] = (lbaStart and 0xFF).toByte()
+        mbr[offset + 9] = ((lbaStart ushr 8) and 0xFF).toByte()
+        mbr[offset + 10] = ((lbaStart ushr 16) and 0xFF).toByte()
+        mbr[offset + 11] = ((lbaStart ushr 24) and 0xFF).toByte()
+        mbr[offset + 12] = (sectorCount and 0xFF).toByte()
+        mbr[offset + 13] = ((sectorCount ushr 8) and 0xFF).toByte()
+        mbr[offset + 14] = ((sectorCount ushr 16) and 0xFF).toByte()
+        mbr[offset + 15] = ((sectorCount ushr 24) and 0xFF).toByte()
+    }
+
+    private fun copyIsoDirectlyToSecondPartition(isoUri: Uri, device: UsbMassStorageDevice) {
+        thread {
+            try {
+                runOnUiThread {
+                    statusText.text = "Инициализация..."
+                    subStatusText.text = "Подготовка диска"
+                }
+                device.init()
+
+                val mainPartitionFs = device.partitions[1].fileSystem
+                val rootDir = mainPartitionFs.rootDirectory
+
+                val inputStream = contentResolver.openInputStream(isoUri) ?: return@thread
+                val totalBytes = inputStream.available().toLong()
+                
+                val newIsoFile = rootDir.createFile("ventoy_image.iso")
+
+                val buffer = ByteArray(1024 * 64)
+                var offset = 0L
+                var bytesRead: Int
+                var lastProgressUpdate = 0L
+
+                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                    newIsoFile.write(offset, ByteBuffer.wrap(buffer, 0, bytesRead))
+                    offset += bytesRead.toLong()
+
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastProgressUpdate > 200L) {
+                        val progressPercent = if (totalBytes > 0) (offset * 100 / totalBytes) else 0
+                        runOnUiThread {
+                            statusText.text = "Идет запись: $progressPercent%"
+                            subStatusText.text = "${offset / 1024 / 1024} MB записано"
+                        }
+                        lastProgressUpdate = currentTime
+                    }
+                }
+
+                newIsoFile.flush()
+                inputStream.close()
+                device.close()
+
+                runOnUiThread {
+                    statusText.text = "Запись завершена!"
+                    subStatusText.text = "Можно извлекать флешку"
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Ошибка записи"
+                    subStatusText.text = e.localizedMessage ?: "Неизвестная ошибка"
+                }
+            }
+        }
+    }
+}
