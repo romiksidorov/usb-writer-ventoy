@@ -16,7 +16,6 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.cardview.widget.CardView
 import me.jahnen.libaums.core.UsbMassStorageDevice
 import java.nio.ByteBuffer
 import kotlin.concurrent.thread
@@ -27,7 +26,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var subStatusText: TextView
     private lateinit var btnCopyIso: Button
-    private lateinit var otgStatusCard: CardView
+    private lateinit var btnFormatVentoy: Button
+    private lateinit var otgStatusCard: LinearLayout
     private lateinit var otgIndicatorDot: View
 
     private val ACTION_USB_PERMISSION = "com.custom.usbwriter.USB_PERMISSION"
@@ -35,10 +35,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Главный контейнер (Тёмный глубокий фон)
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            backgroundColor = Color.parseColor("#0B0F19")
+            setBackgroundColor(Color.parseColor("#0B0F19"))
             setPadding(64, 80, 64, 64)
             gravity = Gravity.CENTER_HORIZONTAL
             layoutParams = ViewGroup.LayoutParams(
@@ -47,12 +46,11 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // Заголовок приложения (Кибер-стиль)
         val titleText = TextView(this).apply {
             text = "MyVentoy"
             textSize = 32f
             typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
-            setTextColor(Color.parseColor("#22D3EE")) // Неоново-бирюзовый
+            setTextColor(Color.parseColor("#22D3EE"))
             gravity = Gravity.CENTER
             setPadding(0, 40, 0, 10)
         }
@@ -62,33 +60,29 @@ class MainActivity : AppCompatActivity() {
             text = "USB BOOTABLE WRITER"
             textSize = 11f
             typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-            setTextColor(Color.parseColor("#475569")) // Темный slate
+            setTextColor(Color.parseColor("#475569"))
             gravity = Gravity.CENTER
             letterSpacing = 0.3f
             setPadding(0, 0, 0, 80)
         }
         mainLayout.addView(subtitleText)
 
-        // КАРТОЧКА СТАТУСА (CardView с внутренним градиентом)
-        otgStatusCard = CardView(this).apply {
-            radius = 36f
-            cardElevation = 16f
-            setCardBackgroundColor(Color.parseColor("#141E30")) // Темно-синий
-            preventCornerOverlap = true
-            useCompatPadding = true
+        otgStatusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(48, 48, 48, 48)
+            gravity = Gravity.CENTER_VERTICAL
+            elevation = 16f
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 36f
+                setColor(Color.parseColor("#141E30"))
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, 0, 0, 80) }
         }
 
-        val cardContent = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(48, 48, 48, 48)
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        // Неоновая точка-индикатор
         otgIndicatorDot = View(this).apply {
             val size = (14 * resources.displayMetrics.density).toInt()
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
@@ -96,12 +90,11 @@ class MainActivity : AppCompatActivity() {
             }
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#EF4444")) // Красный (по умолчанию)
+                setColor(Color.parseColor("#EF4444"))
             }
         }
-        cardContent.addView(otgIndicatorDot)
+        otgStatusCard.addView(otgIndicatorDot)
 
-        // Текстовый блок статуса внутри карточки
         val textContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -110,26 +103,24 @@ class MainActivity : AppCompatActivity() {
             text = "Ожидание USB OTG..."
             textSize = 16f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Color.parseColor("#F8FAFC")) // Снежно-белый
+            setTextColor(Color.parseColor("#F8FAFC"))
         }
         textContainer.addView(statusText)
 
         subStatusText = TextView(this).apply {
             text = "Подключи флешку через переходник"
             textSize = 12f
-            setTextColor(Color.parseColor("#64748B")) // Серый сапфир
+            setTextColor(Color.parseColor("#64748B"))
             setPadding(0, 8, 0, 0)
         }
         textContainer.addView(subStatusText)
 
-        cardContent.addView(textContainer)
-        otgStatusCard.addView(cardContent)
+        otgStatusCard.addView(textContainer)
         mainLayout.addView(otgStatusCard)
 
-        // КНОПКА ЗАПИСИ (Кастомная, с градиентом и закруглениями)
         val normalBtnBg = GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
-            intArrayOf(Color.parseColor("#2563EB"), Color.parseColor("#06B6D4")) // Синий -> Бирюзовый
+            intArrayOf(Color.parseColor("#2563EB"), Color.parseColor("#06B6D4"))
         ).apply { cornerRadius = 32f }
 
         btnCopyIso = Button(this).apply {
@@ -156,9 +147,33 @@ class MainActivity : AppCompatActivity() {
         }
         mainLayout.addView(btnCopyIso)
 
+        val formatBtnBg = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(Color.parseColor("#EA580C"), Color.parseColor("#DC2626"))
+        ).apply { cornerRadius = 32f }
+
+        btnFormatVentoy = Button(this).apply {
+            text = "ФОРМАТИРОВАТЬ В VENTOY"
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(Color.WHITE)
+            elevation = 12f
+            letterSpacing = 0.05f
+            background = formatBtnBg
+            setPadding(40, 48, 40, 48)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 40, 0, 0) }
+        }
+
+        btnFormatVentoy.setOnClickListener {
+            checkAndFormatVentoy()
+        }
+        mainLayout.addView(btnFormatVentoy)
+
         setContentView(mainLayout)
         
-        // Запускаем постоянный мониторинг флешки, чтобы UI реагировал "на лету"
         startOtgMonitoring()
     }
 
@@ -169,21 +184,21 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (devices.isNotEmpty()) {
                         statusText.text = "Флешка обнаружена!"
-                        subStatusText.text = "Готова к записи ISO"
+                        subStatusText.text = "Готова к работе"
                         otgIndicatorDot.background = GradientDrawable().apply {
                             shape = GradientDrawable.OVAL
-                            setColor(Color.parseColor("#10B981")) // Зеленый
+                            setColor(Color.parseColor("#10B981"))
                         }
                     } else {
                         statusText.text = "Ожидание USB OTG..."
                         subStatusText.text = "Подключи флешку через переходник"
                         otgIndicatorDot.background = GradientDrawable().apply {
                             shape = GradientDrawable.OVAL
-                            setColor(Color.parseColor("#EF4444")) // Красный
+                            setColor(Color.parseColor("#EF4444"))
                         }
                     }
                 }
-                Thread.sleep(1500) // Опрос раз в 1.5 секунды
+                Thread.sleep(1500)
             }
         }
     }
@@ -222,60 +237,92 @@ class MainActivity : AppCompatActivity() {
         copyIsoDirectlyToSecondPartition(isoUri, device)
     }
 
-    private fun copyIsoDirectlyToSecondPartition(isoUri: Uri, device: UsbMassStorageDevice) {
-        // Логику переноса переводим в фоновый поток, чтобы UI не зависал
+    private fun checkAndFormatVentoy() {
+        usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val devices = UsbMassStorageDevice.getMassStorageDevices(this)
+
+        if (devices.isEmpty()) {
+            statusText.text = "Флешка не найдена!"
+            subStatusText.text = "Подключи накопитель по OTG."
+            return
+        }
+
+        val device = devices[0]
+
+        if (!usbManager.hasPermission(device.usbDevice)) {
+            val permissionIntent = PendingIntent.getBroadcast(
+                this, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE
+            )
+            usbManager.requestPermission(device.usbDevice, permissionIntent)
+            statusText.text = "Требуется разрешение"
+            subStatusText.text = "Подтверди доступ к USB на экране..."
+            return
+        }
+
+        formatDriveWithVentoy(device)
+    }
+
+    private fun formatDriveWithVentoy(device: UsbMassStorageDevice) {
         thread {
             try {
                 runOnUiThread {
-                    statusText.text = "Инициализация..."
-                    subStatusText.text = "Подготовка диска"
+                    statusText.text = "Разметка диска..."
+                    subStatusText.text = "Не извлекай флешку!"
                 }
                 device.init()
 
-                val mainPartitionFs = device.partitions[1].fileSystem
-                val rootDir = mainPartitionFs.rootDirectory
+                val blockDevice = device.blockDevices[0]
+                val blockSize = blockDevice.blockSize
+                val totalBlocks = blockDevice.size
 
-                val inputStream = contentResolver.openInputStream(isoUri) ?: return@thread
-                val totalBytes = inputStream.available().toLong()
-                
-                // Извлекаем имя ISO
-                val newIsoFile = rootDir.createFile("ventoy_image.iso")
+                val assetList = assets.list("") ?: emptyArray()
+                if (assetList.contains("ventoy_disk.img")) {
+                    val imgStream = assets.open("ventoy_disk.img")
+                    val buffer = ByteArray(blockSize * 128)
+                    var currentBlockOffset = 0L
+                    var bytesRead: Int
 
-                val buffer = ByteArray(1024 * 64) // 64 КБ буфер для макс. скорости
-                var offset = 0L
-                var bytesRead: Int
-                var lastProgressUpdate = 0L
+                    while (imgStream.read(buffer).also { bytesRead = it } != -1) {
+                        val alignedSize = if (bytesRead % blockSize == 0) bytesRead else ((bytesRead / blockSize) + 1) * blockSize
+                        val writeBuf = ByteBuffer.allocate(alignedSize)
+                        writeBuf.put(buffer, 0, bytesRead)
+                        writeBuf.position(0)
 
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    newIsoFile.write(offset, ByteBuffer.wrap(buffer, 0, bytesRead))
-                    offset += bytesRead
-
-                    // Обновляем прогресс раз в 200 мс (чтобы не перегружать UI поток)
-                    val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastProgressUpdate > 200) {
-                        val progressPercent = if (totalBytes > 0) (offset * 100 / totalBytes) else 0
-                        runOnUiThread {
-                            statusText.text = "Идет запись: $progressPercent%"
-                            subStatusText.text = "${offset / 1024 / 1024} MB записано"
-                        }
-                        lastProgressUpdate = currentTime
+                        blockDevice.write(currentBlockOffset, writeBuf)
+                        currentBlockOffset += (alignedSize / blockSize)
                     }
+                    imgStream.close()
                 }
 
-                newIsoFile.flush()
-                inputStream.close()
+                val mbrBuffer = ByteBuffer.allocate(blockSize)
+                blockDevice.read(0, mbrBuffer)
+                val mbr = mbrBuffer.array()
+
+                val vtoyEfiSectors = 65536L
+                val part1Start = 2048L
+                val part2Start = totalBlocks - vtoyEfiSectors
+                val part1Size = part2Start - part1Start
+
+                writeMbrPartitionEntry(mbr, 446, 0x00.toByte(), 0x0C.toByte(), part1Start.toInt(), part1Size.toInt())
+                writeMbrPartitionEntry(mbr, 462, 0x80.toByte(), 0xEF.toByte(), part2Start.toInt(), vtoyEfiSectors.toInt())
+
+                mbr[510] = 0x55.toByte()
+                mbr[511] = 0xAA.toByte()
+
+                mbrBuffer.position(0)
+                blockDevice.write(0, mbrBuffer)
+
                 device.close()
 
                 runOnUiThread {
-                    statusText.text = "Запись завершена! 🎉"
-                    subStatusText.text = "Можно извлекать флешку"
+                    statusText.text = "Разметка Ventoy готова!"
+                    subStatusText.text = "Переподключи флешку по OTG"
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    statusText.text = "Ошибка записи"
-                    subStatusText.text = e.localizedMessage ?: "Неизвестная ошибка"
+                    statusText.text = "Ошибка форматирования"
+                    subStatusText.text = e.localizedMessage ?: "Сбой записи секторов"
                 }
             }
         }
-    }
-}
+        
