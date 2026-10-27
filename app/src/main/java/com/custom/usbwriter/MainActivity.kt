@@ -64,35 +64,36 @@ class MainActivity : AppCompatActivity() {
         writeBootloaderToUsb(device)
     }
 
-    private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
-        try {
-            device.init() // Инициализируем прямой доступ к секторам флешки
-            val blockDevice = device.blockDevices[0]
+private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
+    try {
+        device.init() // Инициализируем прямой доступ к секторам флешки
+        // Исправлено: берем блочное устройство через нулевой раздел
+        val blockDevice = device.partitions[0].fileSystem.blockDevice
 
-            // Открываем вшитый в приложение образ загрузчика Ventoy (boot.img + efi.img)
-            val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
-            zipStream.nextEntry
-            val ventoyImageStream: InputStream = zipStream
+        // Открываем вшитый в приложение архив загрузчика Ventoy
+        val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
+        zipStream.nextEntry
+        val ventoyImageStream: InputStream = zipStream
 
-            val buffer = ByteArray(4096) // Пишем блоками по 4 КБ (то самое выравнивание 4K)
-            var currentSectorOffset = 0L
+        val buffer = ByteArray(4096) // Пишем блоками по 4 КБ
+        var currentSectorOffset = 0L
 
-            statusText.text = "Разметка GPT и запись загрузчика..."
+        runOnUiThread { statusText.text = "Разметка GPT и запись загрузчика..." }
 
-            while (ventoyImageStream.read(buffer) != -1) {
-                val byteBuffer = ByteBuffer.wrap(buffer)
-                // Прямая запись в нулевые сектора флешки, куда обычный проводник не достает
-                blockDevice.write(currentSectorOffset, byteBuffer)
-                currentSectorOffset += (buffer.size / blockDevice.blockSize)
-            }
-
-            ventoyImageStream.close()
-            device.close()
-            statusText.text = "Готово! Загрузчик записан."
-        } catch (e: Exception) {
-            statusText.text = "Ошибка записи: ${e.message}"
+        while (ventoyImageStream.read(buffer) != -1) {
+            val byteBuffer = ByteBuffer.wrap(buffer)
+            blockDevice.write(currentSectorOffset, byteBuffer)
+            currentSectorOffset += (buffer.size / blockDevice.blockSize)
         }
+
+        ventoyImageStream.close()
+        device.close()
+        runOnUiThread { statusText.text = "Готово! Загрузчик записан." }
+    } catch (e: Exception) {
+        runOnUiThread { statusText.text = "Ошибка записи: ${e.message}" }
     }
+}
+
 
     // Метод для прямой переброски ISO-файла во второй раздел флешки
     fun copyIsoDirectlyToSecondPartition(isoUri: Uri) {
