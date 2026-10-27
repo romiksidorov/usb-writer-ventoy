@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
     private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
         try {
             device.init() // Инициализируем прямой доступ к секторам флешки
-            val blockDevice = device.blockDevices[0]
+            val blockDevice = device.blockDevice
 
             // Открываем вшитый в приложение образ загрузчика Ventoy (boot.img + efi.img)
             val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
