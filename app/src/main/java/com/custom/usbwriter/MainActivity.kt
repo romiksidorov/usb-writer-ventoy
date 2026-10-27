@@ -21,8 +21,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        statusText = TextView(this).apply { text = "Подключи флешку с Ventoy..." }
-        val btnCopyIso = Button(this).apply { text = "Выбрать и записать ISO-образ" }
+        statusText = TextView(this).apply { 
+            text = "Подключи флешку с Ventoy..."
+            textSize = 18f
+            setPadding(0, 0, 0, 40)
+        }
+        
+        val btnCopyIso = Button(this).apply { 
+            text = "Выбрать и записать ISO-образ" 
+        }
 
         btnCopyIso.setOnClickListener { 
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -31,7 +38,18 @@ class MainActivity : AppCompatActivity() {
             }
             startActivityForResult(intent, 100)
         }
+
+        // Собираем всё в вертикальный контейнер, чтобы убрать белый экран
+        val layout = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(60, 100, 60, 60)
+            addView(statusText)
+            addView(btnCopyIso)
+        }
+
+        setContentView(layout)
     }
+
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
