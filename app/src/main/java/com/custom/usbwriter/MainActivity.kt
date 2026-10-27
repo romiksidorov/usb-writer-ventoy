@@ -6,10 +6,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.hardware.usb.UsbConstants
-import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbEndpoint
-import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
@@ -22,7 +18,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import me.jahnen.libaums.core.UsbMassStorageDevice
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
@@ -31,7 +26,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var subStatusText: TextView
     private lateinit var btnCopyIso: Button
-    private lateinit var btnFormatVentoy: Button
     private lateinit var otgStatusCard: LinearLayout
     private lateinit var otgIndicatorDot: View
 
@@ -40,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Контейнер с глубоким темным фоном
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#0B0F19"))
@@ -51,6 +46,7 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // Заголовок в стиле Cyber/Ventoy
         val titleText = TextView(this).apply {
             text = "MyVentoy"
             textSize = 32f
@@ -62,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(titleText)
 
         val subtitleText = TextView(this).apply {
-            text = "USB BOOTABLE WRITER"
+            text = "MOBILE MULTIBOOT ENGINE"
             textSize = 11f
             typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
             setTextColor(Color.parseColor("#475569"))
@@ -72,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         }
         mainLayout.addView(subtitleText)
 
+        // Карточка статуса подключения OTG
         otgStatusCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(48, 48, 48, 48)
@@ -95,7 +92,7 @@ class MainActivity : AppCompatActivity() {
             }
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#EF4444"))
+                setColor(Color.parseColor("#EF4444")) // Красный (по умолчанию)
             }
         }
         otgStatusCard.addView(otgIndicatorDot)
@@ -113,7 +110,7 @@ class MainActivity : AppCompatActivity() {
         textContainer.addView(statusText)
 
         subStatusText = TextView(this).apply {
-            text = "Подключи флешку через переходник"
+            text = "Подключите флешку через переходник"
             textSize = 12f
             setTextColor(Color.parseColor("#64748B"))
             setPadding(0, 8, 0, 0)
@@ -123,6 +120,7 @@ class MainActivity : AppCompatActivity() {
         otgStatusCard.addView(textContainer)
         mainLayout.addView(otgStatusCard)
 
+        // Кнопка записи ISO-образа на флешку
         val normalBtnBg = GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
             intArrayOf(Color.parseColor("#2563EB"), Color.parseColor("#06B6D4"))
@@ -152,33 +150,8 @@ class MainActivity : AppCompatActivity() {
         }
         mainLayout.addView(btnCopyIso)
 
-        val formatBtnBg = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(Color.parseColor("#EA580C"), Color.parseColor("#DC2626"))
-        ).apply { cornerRadius = 32f }
-
-        btnFormatVentoy = Button(this).apply {
-            text = "ФОРМАТИРОВАТЬ В VENTOY"
-            textSize = 14f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Color.WHITE)
-            elevation = 12f
-            letterSpacing = 0.05f
-            background = formatBtnBg
-            setPadding(40, 48, 40, 48)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 40, 0, 0) }
-        }
-
-        btnFormatVentoy.setOnClickListener {
-            checkAndFormatVentoy()
-        }
-        mainLayout.addView(btnFormatVentoy)
-
         setContentView(mainLayout)
-
+        
         startOtgMonitoring()
     }
 
@@ -188,18 +161,18 @@ class MainActivity : AppCompatActivity() {
                 val devices = UsbMassStorageDevice.getMassStorageDevices(this)
                 runOnUiThread {
                     if (devices.isNotEmpty()) {
-                        statusText.text = "Флешка обнаружена!"
-                        subStatusText.text = "Готова к работе"
+                        statusText.text = "Накопитель обнаружен"
+                        subStatusText.text = "Готов к интеграции ISO"
                         otgIndicatorDot.background = GradientDrawable().apply {
                             shape = GradientDrawable.OVAL
-                            setColor(Color.parseColor("#10B981"))
+                            setColor(Color.parseColor("#10B981")) // Зеленый
                         }
                     } else {
                         statusText.text = "Ожидание USB OTG..."
-                        subStatusText.text = "Подключи флешку через переходник"
+                        subStatusText.text = "Подключите флешку через переходник"
                         otgIndicatorDot.background = GradientDrawable().apply {
                             shape = GradientDrawable.OVAL
-                            setColor(Color.parseColor("#EF4444"))
+                            setColor(Color.parseColor("#EF4444")) // Красный
                         }
                     }
                 }
@@ -222,8 +195,8 @@ class MainActivity : AppCompatActivity() {
         val devices = UsbMassStorageDevice.getMassStorageDevices(this)
 
         if (devices.isEmpty()) {
-            statusText.text = "Флешка потерялась!"
-            subStatusText.text = "Проверь OTG-коннектор."
+            statusText.text = "Флешка отключена!"
+            subStatusText.text = "Проверьте OTG-коннектор."
             return
         }
 
@@ -234,187 +207,49 @@ class MainActivity : AppCompatActivity() {
                 this, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE
             )
             usbManager.requestPermission(device.usbDevice, permissionIntent)
-            statusText.text = "Требуется разрешение"
-            subStatusText.text = "Подтверди доступ к USB на экране..."
+            statusText.text = "Запрос прав USB"
+            subStatusText.text = "Подтвердите доступ во всплывающем окне..."
             return
         }
 
-        copyIsoDirectlyToSecondPartition(isoUri, device)
+        copyIsoToVentoyPartition(isoUri, device)
     }
 
-    private fun checkAndFormatVentoy() {
-        usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
-        val devices = UsbMassStorageDevice.getMassStorageDevices(this)
-
-        if (devices.isEmpty()) {
-            statusText.text = "Флешка не найдена!"
-            subStatusText.text = "Подключи накопитель по OTG."
-            return
-        }
-
-        val device = devices[0]
-
-        if (!usbManager.hasPermission(device.usbDevice)) {
-            val permissionIntent = PendingIntent.getBroadcast(
-                this, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE
-            )
-            usbManager.requestPermission(device.usbDevice, permissionIntent)
-            statusText.text = "Требуется разрешение"
-            subStatusText.text = "Подтверди доступ к USB на экране..."
-            return
-        }
-
-        formatDriveWithVentoy(device)
-    }
-
-    private fun formatDriveWithVentoy(device: UsbMassStorageDevice) {
+    private fun copyIsoToVentoyPartition(isoUri: Uri, device: UsbMassStorageDevice) {
         thread {
             try {
                 runOnUiThread {
-                    statusText.text = "Разметка диска..."
-                    subStatusText.text = "Не извлекай флешку!"
-                }
-
-                val mbr = ByteArray(512)
-                val totalBlocks = 15633408
-                val vtoyEfiSectors = 65536
-                val part1Start = 2048
-                val part2Start = totalBlocks - vtoyEfiSectors
-                val part1Size = part2Start - part1Start
-
-                writeMbrPartitionEntry(mbr, 446, 0x00.toByte(), 0x0C.toByte(), part1Start, part1Size)
-                writeMbrPartitionEntry(mbr, 462, 0x80.toByte(), 0xEF.toByte(), part2Start, vtoyEfiSectors)
-
-                mbr[510] = 0x55.toByte()
-                mbr[511] = 0xAA.toByte()
-
-                val success = writeRawMbrViaUsb(device.usbDevice, mbr)
-
-                runOnUiThread {
-                    if (success) {
-                        statusText.text = "Разметка Ventoy готова!"
-                        subStatusText.text = "Переподключи флешку по OTG"
-                    } else {
-                        statusText.text = "Ошибка доступа к USB"
-                        subStatusText.text = "Не удалось захватить интерфейс"
-                    }
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    statusText.text = "Ошибка форматирования"
-                    subStatusText.text = e.localizedMessage ?: "Сбой записи секторов"
-                }
-            }
-        }
-    }
-
-    private fun writeRawMbrViaUsb(usbDevice: UsbDevice, mbr: ByteArray): Boolean {
-        val connection = usbManager.openDevice(usbDevice) ?: return false
-        var targetInterface: UsbInterface? = null
-        var epOut: UsbEndpoint? = null
-        var epIn: UsbEndpoint? = null
-
-        for (i in 0 until usbDevice.interfaceCount) {
-            val intf = usbDevice.getInterface(i)
-            if (intf.interfaceClass == UsbConstants.USB_CLASS_MASS_STORAGE) {
-                targetInterface = intf
-                for (j in 0 until intf.endpointCount) {
-                    val ep = intf.getEndpoint(j)
-                    if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
-                        if (ep.direction == UsbConstants.USB_DIR_OUT) {
-                            epOut = ep
-                        } else if (ep.direction == UsbConstants.USB_DIR_IN) {
-                            epIn = ep
-                        }
-                    }
-                }
-                break
-            }
-        }
-
-        if (targetInterface == null || epOut == null || epIn == null) {
-            connection.close()
-            return false
-        }
-
-        connection.claimInterface(targetInterface, true)
-
-        val cbw = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN)
-        cbw.putInt(0x43425355)
-        cbw.putInt(1)
-        cbw.putInt(512)
-        cbw.put(0x00.toByte())
-        cbw.put(0x00.toByte())
-        cbw.put(10.toByte())
-        cbw.put(0x2A.toByte())
-        cbw.put(0x00.toByte())
-        cbw.putInt(0)
-        cbw.put(0x00.toByte())
-        cbw.put(0x00.toByte())
-        cbw.put(0x01.toByte())
-        cbw.put(0x00.toByte())
-
-        val cbwArray = cbw.array()
-        val cswArray = ByteArray(13)
-
-        val res1 = connection.bulkTransfer(epOut, cbwArray, cbwArray.size, 5000)
-        val res2 = connection.bulkTransfer(epOut, mbr, 512, 5000)
-        val res3 = connection.bulkTransfer(epIn, cswArray, cswArray.size, 5000)
-
-        connection.releaseInterface(targetInterface)
-        connection.close()
-        return res1 >= 0 && res2 == 512 && res3 >= 0
-    }
-
-    private fun writeMbrPartitionEntry(
-        mbr: ByteArray,
-        offset: Int,
-        status: Byte,
-        type: Byte,
-        lbaStart: Int,
-        sectorCount: Int
-    ) {
-        mbr[offset] = status
-        mbr[offset + 1] = 0xFE.toByte()
-        mbr[offset + 2] = 0xFF.toByte()
-        mbr[offset + 3] = 0xFF.toByte()
-        mbr[offset + 4] = type
-        mbr[offset + 5] = 0xFE.toByte()
-        mbr[offset + 6] = 0xFF.toByte()
-        mbr[offset + 7] = 0xFF.toByte()
-        mbr[offset + 8] = (lbaStart and 0xFF).toByte()
-        mbr[offset + 9] = ((lbaStart ushr 8) and 0xFF).toByte()
-        mbr[offset + 10] = ((lbaStart ushr 16) and 0xFF).toByte()
-        mbr[offset + 11] = ((lbaStart ushr 24) and 0xFF).toByte()
-        mbr[offset + 12] = (sectorCount and 0xFF).toByte()
-        mbr[offset + 13] = ((sectorCount ushr 8) and 0xFF).toByte()
-        mbr[offset + 14] = ((sectorCount ushr 16) and 0xFF).toByte()
-        mbr[offset + 15] = ((sectorCount ushr 24) and 0xFF).toByte()
-    }
-
-    private fun copyIsoDirectlyToSecondPartition(isoUri: Uri, device: UsbMassStorageDevice) {
-        thread {
-            try {
-                runOnUiThread {
-                    statusText.text = "Инициализация..."
-                    subStatusText.text = "Подготовка диска"
+                    statusText.text = "Инициализация диска..."
+                    subStatusText.text = "Сканирование файловой системы"
                 }
                 device.init()
 
+                if (device.partitions.isEmpty()) {
+                    runOnUiThread {
+                        statusText.text = "Ошибка структуры"
+                        subStatusText.text = "Разделы накопителя не найдены"
+                    }
+                    device.close()
+                    return@thread
+                }
+
+                // Выбираем целевой раздел (по логике Ventoy это основной exFAT раздел для образов)
                 val targetPartition = if (device.partitions.size > 1) {
                     device.partitions[1]
                 } else {
                     device.partitions[0]
                 }
+
                 val mainPartitionFs = targetPartition.fileSystem
                 val rootDir = mainPartitionFs.rootDirectory
 
                 val inputStream = contentResolver.openInputStream(isoUri) ?: return@thread
                 val totalBytes = inputStream.available().toLong()
+                
+                // Создаем файл образа на флешке
+                val newIsoFile = rootDir.createFile("ventoy_boot_image.iso")
 
-                val newIsoFile = rootDir.createFile("ventoy_image.iso")
-
-                val buffer = ByteArray(1024 * 64)
+                val buffer = ByteArray(1024 * 64) // Буфер 64 КБ для молниеносной записи
                 var offset = 0L
                 var bytesRead: Int
                 var lastProgressUpdate = 0L
@@ -427,7 +262,7 @@ class MainActivity : AppCompatActivity() {
                     if (currentTime - lastProgressUpdate > 200L) {
                         val progressPercent = if (totalBytes > 0L) (offset * 100L / totalBytes) else 0L
                         runOnUiThread {
-                            statusText.text = "Идет запись: $progressPercent%"
+                            statusText.text = "Перенос ISO: $progressPercent%"
                             subStatusText.text = "${offset / 1024L / 1024L} MB записано"
                         }
                         lastProgressUpdate = currentTime
@@ -439,13 +274,13 @@ class MainActivity : AppCompatActivity() {
                 device.close()
 
                 runOnUiThread {
-                    statusText.text = "Запись завершена!"
-                    subStatusText.text = "Можно извлекать флешку"
+                    statusText.text = "Успешно записано! 🎉"
+                    subStatusText.text = "Флешка готова к загрузке на ПК"
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    statusText.text = "Ошибка записи"
-                    subStatusText.text = e.localizedMessage ?: "Неизвестная ошибка"
+                    statusText.text = "Ошибка передачи"
+                    subStatusText.text = e.localizedMessage ?: "Сбой записи потока"
                 }
             }
         }
