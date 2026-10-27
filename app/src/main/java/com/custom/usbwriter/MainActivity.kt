@@ -1,288 +1,486 @@
-package com.custom.usbwriter
+package com.ventoid.app
 
+import android.app.AlertDialog
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.content.IntentFilter
 import android.hardware.usb.UsbManager
-import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.LinearLayout
+import android.widget.EditText
+import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import me.jahnen.libaums.core.UsbMassStorageDevice
-import java.nio.ByteBuffer
-import kotlin.concurrent.thread
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.updatePadding
+import com.ventoid.app.install.InstallMessage
+import com.ventoid.app.install.InstallProgress
+import com.ventoid.app.install.InstallStage
+import com.ventoid.app.install.InstallerAssets
+import com.ventoid.app.install.PartitionScheme
+import com.ventoid.app.install.TransferEstimate
+import com.ventoid.app.install.TransferMeter
+import com.ventoid.app.install.VentoyInstallCoordinator
+import com.ventoid.app.installer.VentoyConstants
+import com.ventoid.app.inspect.DriveInspector
+import com.ventoid.app.inspect.DriveNote
+import com.ventoid.app.inspect.DriveReport
+import com.ventoid.app.inspect.PartitionStyle
+import com.ventoid.app.util.VentoidFileLogger
+import com.ventoid.app.usb.UsbDeviceItem
+import com.ventoid.app.usb.UsbMassStorageHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var usbManager: UsbManager
-    private lateinit var statusText: TextView
-    private lateinit var subStatusText: TextView
-    private lateinit var btnCopyIso: Button
-    private lateinit var otgStatusCard: LinearLayout
-    private lateinit var otgIndicatorDot: View
+    companion object {
+        private const val ACTION_USB_PERMISSION = "android.hardware.usb.action.USB_PERMISSION"
+        private const val PREVIEW_IMAGE_COUNT = 5
+    }
 
-    private val ACTION_USB_PERMISSION = "com.custom.usbwriter.USB_PERMISSION"
+    private enum class PendingUsbAction {
+        INSTALL,
+        INSPECT,
+        UPDATE,
+    }
+
+    private lateinit var spinnerUsb: Spinner
+    private lateinit var spinnerPartitionScheme: Spinner
+    private lateinit var editReservedSpace: EditText
+    private lateinit var buttonRefresh: Button
+    private lateinit var buttonInstall: Button
+    private lateinit var buttonInspect: Button
+    private lateinit var buttonUpdate: Button
+    private lateinit var tabInspect: TextView
+    private lateinit var tabUpdate: TextView
+    private lateinit var panelInspect: View
+    private lateinit var panelUpdate: View
+    private lateinit var textInspectResult: TextView
+    private lateinit var textUpdateStatus: TextView
+    private lateinit var textStageTitle: TextView
+    private lateinit var textSecureBootStatus: TextView
+    private lateinit var installStageLabels: List<TextView>
+    private lateinit var installStageStates: List<TextView>
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var permissionReceiver: BroadcastReceiver? = null
+    private var installJob: Job? = null
+    private var pendingUsbAction: PendingUsbAction? = null
+    private var activeFlow: PendingUsbAction? = null
+    private var lastReport: DriveReport? = null
+    private var lastSelectedDeviceName: String? = null
+    private var deviceList: List<UsbDeviceItem> = emptyList()
+    private var installProgressPresentation = InstallProgressPresenter.idle()
+    private val ventoyTransferMeter = TransferMeter()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureSystemBars()
+        setContentView(R.layout.activity_main)
+        UsbMassStorageHelper.ensureLibusbRegistered()
+        applySystemBarInsets()
 
-        // Контейнер с глубоким темным фоном
-        val mainLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#0B0F19"))
-            setPadding(64, 80, 64, 64)
-            gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
+        spinnerUsb = findViewById(R.id.spinner_usb)
+        spinnerPartitionScheme = findViewById(R.id.spinner_partition_scheme)
+        editReservedSpace = findViewById(R.id.edit_reserved_space)
+        buttonRefresh = findViewById(R.id.button_refresh)
+        buttonInstall = findViewById(R.id.button_install)
+        buttonInspect = findViewById(R.id.button_inspect)
+        buttonUpdate = findViewById(R.id.button_update)
+        tabInspect = findViewById(R.id.tab_inspect)
+        tabUpdate = findViewById(R.id.tab_update)
+        panelInspect = findViewById(R.id.panel_inspect)
+        panelUpdate = findViewById(R.id.panel_update)
+        textInspectResult = findViewById(R.id.text_inspect_result)
+        textUpdateStatus = findViewById(R.id.text_update_status)
+        textStageTitle = findViewById(R.id.text_stage_title)
+        textSecureBootStatus = findViewById(R.id.text_secure_boot_status)
+        installStageLabels = listOf(
+            findViewById(R.id.text_stage_boot_label),
+            findViewById(R.id.text_stage_core_label),
+            findViewById(R.id.text_stage_data_label),
+            findViewById(R.id.text_stage_efi_label),
+            findViewById(R.id.text_stage_verify_label),
+        )
+        installStageStates = listOf(
+            findViewById(R.id.text_stage_boot_state),
+            findViewById(R.id.text_stage_core_state),
+            findViewById(R.id.text_stage_data_state),
+            findViewById(R.id.text_stage_efi_state),
+            findViewById(R.id.text_stage_verify_state),
+        )
+        renderInstallProgress(InstallProgressPresenter.idle())
 
-        // Заголовок в стиле Cyber/Ventoy
-        val titleText = TextView(this).apply {
-            text = "MyVentoy"
-            textSize = 32f
-            typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
-            setTextColor(Color.parseColor("#22D3EE"))
-            gravity = Gravity.CENTER
-            setPadding(0, 40, 0, 10)
-        }
-        mainLayout.addView(titleText)
+        setupPartitionSchemeSpinner()
+        refreshSecureBootStatus()
 
-        val subtitleText = TextView(this).apply {
-            text = "MOBILE MULTIBOOT ENGINE"
-            textSize = 11f
-            typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-            setTextColor(Color.parseColor("#475569"))
-            gravity = Gravity.CENTER
-            letterSpacing = 0.3f
-            setPadding(0, 0, 0, 80)
-        }
-        mainLayout.addView(subtitleText)
+        buttonRefresh.setOnClickListener { refreshDeviceList() }
+        buttonInstall.setOnClickListener { onInstallClicked() }
+        buttonInspect.setOnClickListener { onInspectClicked() }
+        buttonUpdate.setOnClickListener { onUpdateClicked() }
+        tabInspect.setOnClickListener { selectTab(inspect = true) }
+        tabUpdate.setOnClickListener { selectTab(inspect = false) }
+        textInspectResult.setOnClickListener { showFullImageList() }
+        selectTab(inspect = true)
 
-        // Карточка статуса подключения OTG
-        otgStatusCard = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(48, 48, 48, 48)
-            gravity = Gravity.CENTER_VERTICAL
-            elevation = 16f
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 36f
-                setColor(Color.parseColor("#141E30"))
+        spinnerUsb.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val name = deviceList.getOrNull(position)?.displayName
+                if (name != lastSelectedDeviceName) {
+                    lastSelectedDeviceName = name
+                    resetAnalysisState()
+                }
             }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, 80) }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
         }
 
-        otgIndicatorDot = View(this).apply {
-            val size = (14 * resources.displayMetrics.density).toInt()
-            layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                setMargins(0, 0, 32, 0)
-            }
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#EF4444")) // Красный (по умолчанию)
-            }
-        }
-        otgStatusCard.addView(otgIndicatorDot)
-
-        val textContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        statusText = TextView(this).apply {
-            text = "Ожидание USB OTG..."
-            textSize = 16f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Color.parseColor("#F8FAFC"))
-        }
-        textContainer.addView(statusText)
-
-        subStatusText = TextView(this).apply {
-            text = "Подключите флешку через переходник"
-            textSize = 12f
-            setTextColor(Color.parseColor("#64748B"))
-            setPadding(0, 8, 0, 0)
-        }
-        textContainer.addView(subStatusText)
-
-        otgStatusCard.addView(textContainer)
-        mainLayout.addView(otgStatusCard)
-
-        // Кнопка записи ISO-образа на флешку
-        val normalBtnBg = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(Color.parseColor("#2563EB"), Color.parseColor("#06B6D4"))
-        ).apply { cornerRadius = 32f }
-
-        btnCopyIso = Button(this).apply {
-            text = "ЗАПИСАТЬ ISO-ОБРАЗ"
-            textSize = 14f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(Color.WHITE)
-            elevation = 12f
-            letterSpacing = 0.05f
-            background = normalBtnBg
-            setPadding(40, 48, 40, 48)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        btnCopyIso.setOnClickListener {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "*/*"
-            }
-            startActivityForResult(intent, 100)
-        }
-        mainLayout.addView(btnCopyIso)
-
-        setContentView(mainLayout)
-        
-        startOtgMonitoring()
+        refreshDeviceList()
     }
 
-    private fun startOtgMonitoring() {
-        thread {
-            while (!isFinishing) {
-                val devices = UsbMassStorageDevice.getMassStorageDevices(this)
-                runOnUiThread {
-                    if (devices.isNotEmpty()) {
-                        statusText.text = "Накопитель обнаружен"
-                        subStatusText.text = "Готов к интеграции ISO"
-                        otgIndicatorDot.background = GradientDrawable().apply {
-                            shape = GradientDrawable.OVAL
-                            setColor(Color.parseColor("#10B981")) // Зеленый
-                        }
+    private fun selectTab(inspect: Boolean) {
+        tabInspect.setBackgroundResource(
+            if (inspect) R.drawable.tab_selected else R.drawable.tab_unselected
+        )
+        tabUpdate.setBackgroundResource(
+            if (inspect) R.drawable.tab_unselected else R.drawable.tab_selected
+        )
+        tabInspect.setTextColor(
+            ContextCompat.getColor(
+                this,
+                if (inspect) R.color.ventoid_primary else R.color.ventoid_text_secondary,
+            )
+        )
+        tabUpdate.setTextColor(
+            ContextCompat.getColor(
+                this,
+                if (inspect) R.color.ventoid_text_secondary else R.color.ventoid_primary,
+            )
+        )
+        panelInspect.visibility = if (inspect) View.VISIBLE else View.GONE
+        panelUpdate.visibility = if (inspect) View.GONE else View.VISIBLE
+    }
+
+    private fun resetAnalysisState() {
+        lastReport = null
+        if (::textInspectResult.isInitialized) {
+            textInspectResult.text = getString(R.string.inspect_result_placeholder)
+            textUpdateStatus.text = getString(R.string.update_status_none)
+            buttonUpdate.isEnabled = false
+            buttonUpdate.setText(R.string.update_run)
+        }
+    }
+
+    private fun setActionButtonsEnabled(enabled: Boolean) {
+        buttonInstall.isEnabled = enabled
+        buttonInspect.isEnabled = enabled
+        buttonUpdate.isEnabled = enabled && lastReport?.let {
+            it.ventoyDetected && DriveNote.NEWER_THAN_BUNDLED !in it.notes
+        } == true
+    }
+
+    @Suppress("DEPRECATION")
+    private fun configureSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = ContextCompat.getColor(this, R.color.ventoid_window)
+        window.navigationBarColor = ContextCompat.getColor(this, R.color.ventoid_window)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+    }
+
+    private fun applySystemBarInsets() {
+        val root = findViewById<View>(R.id.root_scroll)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(
+                left = systemBars.left,
+                top = systemBars.top,
+                right = systemBars.right,
+                bottom = systemBars.bottom,
+            )
+            insets
+        }
+    }
+
+    private fun setupPartitionSchemeSpinner() {
+        spinnerPartitionScheme.adapter = createSpinnerAdapter(
+            listOf(
+                getString(R.string.partition_scheme_mbr),
+                getString(R.string.partition_scheme_gpt),
+            )
+        )
+    }
+
+    private fun refreshSecureBootStatus() {
+        textSecureBootStatus.text = getString(R.string.secure_boot_checking)
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { InstallerAssets.inspectSecureBootSupport(assets) }
+            }.onSuccess { support ->
+                if (!isDestroyed) {
+                    if (support.supported) {
+                        textSecureBootStatus.text = getString(R.string.secure_boot_verified)
+                        textSecureBootStatus.setTextColor(
+                            ContextCompat.getColor(this@MainActivity, R.color.ventoid_text_secondary)
+                        )
                     } else {
-                        statusText.text = "Ожидание USB OTG..."
-                        subStatusText.text = "Подключите флешку через переходник"
-                        otgIndicatorDot.background = GradientDrawable().apply {
-                            shape = GradientDrawable.OVAL
-                            setColor(Color.parseColor("#EF4444")) // Красный
-                        }
+                        textSecureBootStatus.text = getString(
+                            R.string.secure_boot_missing,
+                            support.missingMarkers.joinToString()
+                        )
+                        textSecureBootStatus.setTextColor(
+                            ContextCompat.getColor(this@MainActivity, R.color.ventoid_warning)
+                        )
                     }
                 }
-                Thread.sleep(1500)
+            }.onFailure { error ->
+                if (!isDestroyed) {
+                    textSecureBootStatus.text = getString(
+                        R.string.secure_boot_check_failed,
+                        error.message ?: error.javaClass.simpleName
+                    )
+                    textSecureBootStatus.setTextColor(
+                        ContextCompat.getColor(this@MainActivity, R.color.ventoid_warning)
+                    )
+                }
             }
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 100 && resultCode == RESULT_OK) {
-            data?.data?.let { uri ->
-                checkAndCopyIso(uri)
-            }
-        }
+    override fun onDestroy() {
+        installJob?.cancel()
+        unregisterPermissionReceiver()
+        scope.cancel()
+        super.onDestroy()
     }
 
-    private fun checkAndCopyIso(isoUri: Uri) {
-        usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
-        val devices = UsbMassStorageDevice.getMassStorageDevices(this)
+    private fun refreshDeviceList() {
+        deviceList = UsbMassStorageHelper.getMassStorageDevices(this)
+        val displayNames = deviceList
+            .map { it.displayName }
+            .ifEmpty { listOf(getString(R.string.usb_device_placeholder)) }
+        spinnerUsb.adapter = createSpinnerAdapter(displayNames)
+        spinnerUsb.isEnabled = deviceList.isNotEmpty()
+        setActionButtonsEnabled(deviceList.isNotEmpty())
+        if (deviceList.isEmpty()) {
+            textStageTitle.text = getString(R.string.usb_device_none)
+        } else if (installJob?.isActive != true) {
+            textStageTitle.text = getString(R.string.progress_idle)
+        }
+        if (installJob?.isActive != true) {
+            renderInstallProgress(InstallProgressPresenter.idle())
+        }
+        VentoidFileLogger.log(getString(R.string.usb_device_count, deviceList.size))
+    }
 
-        if (devices.isEmpty()) {
-            statusText.text = "Флешка отключена!"
-            subStatusText.text = "Проверьте OTG-коннектор."
+    private fun onInstallClicked() {
+        val item = selectedUsbDevice() ?: return
+        val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+
+        if (usbManager.hasPermission(item.usbDevice)) {
+            startInstall(item)
             return
         }
 
-        val device = devices[0]
+        requestUsbPermission(usbManager, item, PendingUsbAction.INSTALL)
+    }
 
-        if (!usbManager.hasPermission(device.usbDevice)) {
-            val permissionIntent = PendingIntent.getBroadcast(
-                this, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE
-            )
-            usbManager.requestPermission(device.usbDevice, permissionIntent)
-            statusText.text = "Запрос прав USB"
-            subStatusText.text = "Подтвердите доступ во всплывающем окне..."
+    private fun onInspectClicked() {
+        if (installJob?.isActive == true) return
+        val item = selectedUsbDevice() ?: return
+        val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+
+        if (usbManager.hasPermission(item.usbDevice)) {
+            startInspect(item)
             return
         }
 
-        copyIsoToVentoyPartition(isoUri, device)
+        requestUsbPermission(usbManager, item, PendingUsbAction.INSPECT)
     }
 
-    private fun copyIsoToVentoyPartition(isoUri: Uri, device: UsbMassStorageDevice) {
-        thread {
-            try {
-                runOnUiThread {
-                    statusText.text = "Инициализация диска..."
-                    subStatusText.text = "Сканирование файловой системы"
+    private fun onUpdateClicked() {
+        if (installJob?.isActive == true) return
+        val item = selectedUsbDevice() ?: return
+        val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
+
+        if (usbManager.hasPermission(item.usbDevice)) {
+            startUpdate(item)
+            return
+        }
+
+        requestUsbPermission(usbManager, item, PendingUsbAction.UPDATE)
+    }
+
+    private fun selectedUsbDevice(): UsbDeviceItem? {
+        val index = spinnerUsb.selectedItemPosition
+        if (deviceList.isEmpty() || index !in deviceList.indices) {
+            toast(R.string.no_usb)
+            return null
+        }
+        return deviceList[index]
+    }
+
+    private fun requestUsbPermission(
+        usbManager: UsbManager,
+        item: UsbDeviceItem,
+        action: PendingUsbAction,
+    ) {
+        unregisterPermissionReceiver()
+        pendingUsbAction = action
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != ACTION_USB_PERMISSION) {
+                    return
                 }
-                device.init()
 
-                if (device.partitions.isEmpty()) {
-                    runOnUiThread {
-                        statusText.text = "Ошибка структуры"
-                        subStatusText.text = "Разделы накопителя не найдены"
+                unregisterPermissionReceiver()
+
+                if (usbManager.hasPermission(item.usbDevice)) {
+                    when (pendingUsbAction) {
+                        PendingUsbAction.INSPECT -> startInspect(item)
+                        PendingUsbAction.UPDATE -> startUpdate(item)
+                        else -> startInstall(item)
                     }
-                    device.close()
-                    return@thread
-                }
-
-                // Выбираем целевой раздел (по логике Ventoy это основной exFAT раздел для образов)
-                val targetPartition = if (device.partitions.size > 1) {
-                    device.partitions[1]
                 } else {
-                    device.partitions[0]
+                    safeLog(getString(R.string.permission_denied))
+                    toast(R.string.permission_denied)
                 }
+            }
+        }
 
-                val mainPartitionFs = targetPartition.fileSystem
-                val rootDir = mainPartitionFs.rootDirectory
+        permissionReceiver = receiver
+        val filter = IntentFilter(ACTION_USB_PERMISSION)
+        ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
 
-                val inputStream = contentResolver.openInputStream(isoUri) ?: return@thread
-                val totalBytes = inputStream.available().toLong()
-                
-                // Создаем файл образа на флешке
-                val newIsoFile = rootDir.createFile("ventoy_boot_image.iso")
+        val pendingIntent = PendingIntent.getBroadcast(
+            this,
+            0,
+            Intent(ACTION_USB_PERMISSION).setPackage(packageName),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        usbManager.requestPermission(item.usbDevice, pendingIntent)
+    }
 
-                val buffer = ByteArray(1024 * 64) // Буфер 64 КБ для молниеносной записи
-                var offset = 0L
-                var bytesRead: Int
-                var lastProgressUpdate = 0L
+    private fun unregisterPermissionReceiver() {
+        val receiver = permissionReceiver ?: return
+        permissionReceiver = null
+        runCatching { unregisterReceiver(receiver) }
+    }
 
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    newIsoFile.write(offset, ByteBuffer.wrap(buffer, 0, bytesRead))
-                    offset += bytesRead.toLong()
-
-                    val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastProgressUpdate > 200L) {
-                        val progressPercent = if (totalBytes > 0L) (offset * 100L / totalBytes) else 0L
-                        runOnUiThread {
-                            statusText.text = "Перенос ISO: $progressPercent%"
-                            subStatusText.text = "${offset / 1024L / 1024L} MB записано"
-                        }
-                        lastProgressUpdate = currentTime
-                    }
+    private fun startInstall(item: UsbDeviceItem) {
+        installJob?.cancel()
+        activeFlow = PendingUsbAction.INSTALL
+        renderInstallProgress(InstallProgressPresenter.idle())
+        textStageTitle.text = getString(R.string.progress_idle)
+        val partitionScheme = selectedPartitionScheme()
+        val reserveSectors = selectedReserveSectors() ?: return
+        val reservedSpaceGiB = reserveSectors / VentoyConstants.SECTORS_PER_GIB
+        installJob = scope.launch {
+            buttonInstall.isEnabled = false
+            try {
+                safeLog(getString(R.string.partition_scheme_log, partitionScheme.toDisplayLabel()))
+                safeLog(getString(R.string.reserved_space_log, reservedSpaceGiB))
+                withContext(Dispatchers.IO) {
+                    VentoyInstallCoordinator(applicationContext).install(
+                        device = item,
+                        partitionScheme = partitionScheme,
+                        reserveSectors = reserveSectors,
+                        onProgress = ::handleInstallProgress,
+                    )
                 }
-
-                newIsoFile.flush()
-                inputStream.close()
-                device.close()
-
-                runOnUiThread {
-                    statusText.text = "Успешно записано! 🎉"
-                    subStatusText.text = "Флешка готова к загрузке на ПК"
+                safeToast(getString(R.string.install_success))
+                // Confirm what actually landed on the drive: re-run the read-only
+                // inspection so the report panel and the title show the new version.
+                try {
+                    val report = runDriveInspection(item)
+                    VentoidFileLogger.log(buildInspectLogLine(report))
+                    renderInspectReport(report)
+                    textStageTitle.text = getString(
+                        R.string.install_success_confirmed,
+                        report.ventoyVersion ?: getString(R.string.inspect_version_unknown),
+                    )
+                } catch (e: Exception) {
+                    VentoidFileLogger.log(
+                        "post-install inspect failed: " + (e.message ?: e.javaClass.simpleName),
+                    )
                 }
+            } catch (e: SecurityException) {
+                VentoidFileLogger.log(e)
+                safeLog(getString(R.string.permission_denied))
+                safeToast(getString(R.string.permission_denied))
+            } catch (e: IOException) {
+                VentoidFileLogger.log(e)
+                showError(getString(R.string.install_failed_with_reason, e.message ?: e.javaClass.simpleName))
             } catch (e: Exception) {
-                runOnUiThread {
-                    statusText.text = "Ошибка передачи"
-                    subStatusText.text = e.localizedMessage ?: "Сбой записи потока"
+                VentoidFileLogger.log(e)
+                showError(getString(R.string.unexpected_error_with_reason, e.message ?: e.javaClass.simpleName))
+            } finally {
+                activeFlow = null
+                if (!isDestroyed) {
+                    refreshDeviceList()
+                    buttonInstall.isEnabled = deviceList.isNotEmpty()
                 }
             }
         }
     }
-}
+
+    /** Opens the device, runs the read-only inspection, and closes the session. */
+    private suspend fun runDriveInspection(item: UsbDeviceItem): DriveReport {
+        return withContext(Dispatchers.IO) {
+            val assets = InstallerAssets.load(applicationContext.assets)
+            val session = UsbMassStorageHelper.openBlockDevice(applicationContext, item)
+            try {
+                DriveInspector(session.blockDevice).inspect(assets.ventoyDiskImg)
+            } finally {
+                session.close()
+            }
+        }
+    }
+
+    /**
+     * Read-only drive analysis: opens the device, detects an existing Ventoy layout,
+     * reads its version, and shows the report. Never writes to the device.
+     */
+    private fun startInspect(item: UsbDeviceItem) {
+        activeFlow = PendingUsbAction.INSPECT
+        installJob = scope.launch {
+            setActionButtonsEnabled(false)
+            safeLog(getString(R.string.inspect_progress))
+            try {
+                val report = runDriveInspection(item)
+                VentoidFileLogger.log(buildInspectLogLine(report))
+                renderInspectReport(report)
+            } catch (e: SecurityException) {
+                VentoidFileLogger.log(e)
+                safeLog(getString(R.string.permission_denied))
+                safeToast(getString(R.string.permission_denied))
+            } catch (e: IOException) {
+                VentoidFileLogger.log(e)
+                showError(getString(R.string.inspect_failed_with_reason, e.message ?: e.javaClass.simpleName))
+            } catch (e: Exception) {
+                VentoidFileLogger.log(e)
+                showError(getString(R.string.inspect_failed_with_reason, e.message ?: e.javaClass.simpleName))
+            } finally {
+                activeFlow = null
+                if (!isDestroyed) {
+                    set
