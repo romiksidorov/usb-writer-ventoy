@@ -67,8 +67,9 @@ class MainActivity : AppCompatActivity() {
 private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
     try {
         device.init() // Инициализируем прямой доступ к секторам флешки
-        // Исправлено: берем блочное устройство через нулевой раздел
-        val blockDevice = device.partitions[0].fileSystem.blockDevice
+        
+        // Исправлено: получаем блочное устройство правильно для текущей версии libaums
+        val blockDevice = device.partitions[0].blockDevice
 
         // Открываем вшитый в приложение архив загрузчика Ventoy
         val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
@@ -93,7 +94,6 @@ private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
         runOnUiThread { statusText.text = "Ошибка записи: ${e.message}" }
     }
 }
-
 
     // Метод для прямой переброски ISO-файла во второй раздел флешки
     fun copyIsoDirectlyToSecondPartition(isoUri: Uri) {
