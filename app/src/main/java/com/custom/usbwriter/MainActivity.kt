@@ -3,7 +3,6 @@ package com.custom.usbwriter
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
@@ -11,7 +10,6 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import me.jahnen.libaums.core.UsbMassStorageDevice
-import java.io.InputStream
 import java.nio.ByteBuffer
 
 class MainActivity : AppCompatActivity() {
@@ -23,14 +21,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Простейший интерфейс: текст статуса и две кнопки
-        statusText = TextView(this).apply { text = "Ожидание флешки..." }
-        val btnPrepare = Button(this).apply { text = "1. Записать загрузчик (Prepare USB)" }
-        val btnCopyIso = Button(this).apply { text = "2. Скинуть ISO в обход проводника" }
+        statusText = TextView(this).apply { text = "Подключи флешку с Ventoy..." }
+        val btnCopyIso = Button(this).apply { text = "Выбрать и записать ISO-образ" }
 
-        btnPrepare.setOnClickListener { detectAndPrepareUsb() }
-        
-        // Тут вызывается системное окно выбора твоего .iso файла
         btnCopyIso.setOnClickListener { 
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
@@ -40,7 +33,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun detectAndPrepareUsb() {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 100 && resultCode == RESULT_OK) {
+            data?.data?.let { uri ->
+                checkAndCopyIso(uri)
+            }
+        }
+    }
+
+    private fun checkAndCopyIso(isoUri: Uri) {
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = UsbMassStorageDevice.getMassStorageDevices(this)
 
@@ -49,9 +51,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val device = devices[0] // Берем первую подключенную флешку
+        val device = devices[0]
 
-        // Запрашиваем у Android разрешение на прямой доступ к USB
         if (!usbManager.hasPermission(device.usbDevice)) {
             val permissionIntent = PendingIntent.getBroadcast(
                 this, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE
@@ -61,72 +62,44 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        writeBootloaderToUsb(device)
+        copyIsoDirectlyToSecondPartition(isoUri, device)
     }
 
-private fun writeBootloaderToUsb(device: UsbMassStorageDevice) {
-    try {
-        device.init() // Инициализируем прямой доступ к секторам флешки
-        
-        // Явный вызов метода getBlockDevices() обходит любые проблемы свойствами в Kotlin
-        val blockDevice = device.getBlockDevices()[0]
+    // Твой рабочий метод обхода ограничений Android для записи ISO на основной раздел
+    private fun copyIsoDirectlyToSecondPartition(isoUri: Uri, device: UsbMassStorageDevice) {
+        try {
+            device.init()
+            statusText.text = "Копирую ISO на флешку..."
 
-        // Открываем вшитый в приложение архив загрузчика Ventoy
-        val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
-        zipStream.nextEntry
-        val ventoyImageStream: InputStream = zipStream
+            // partitions[1] — это основной раздел флешки с Ventoy
+            val mainPartitionFs = device.partitions[1].fileSystem
+            val rootDir = mainPartitionFs.rootDirectory
 
-        val buffer = ByteArray(4096) // Пишем блоками по 4 КБ
-        var currentSectorOffset = 0L
+            val inputStream = contentResolver.openInputStream(isoUri) ?: return
+            
+            // Получаем имя файла из URI или задаем дефолтное
+            val newIsoFile = rootDir.createFile("os_image.iso")
 
-        runOnUiThread { statusText.text = "Разметка GPT и запись загрузчика..." }
+            val buffer = ByteArray(1024 * 64) // Буфер 64 КБ для высокой скорости
+            var offset = 0L
+            var bytesRead: Int
 
-        while (ventoyImageStream.read(buffer) != -1) {
-            val byteBuffer = ByteBuffer.wrap(buffer)
-            blockDevice.write(currentSectorOffset, byteBuffer)
-            currentSectorOffset += (buffer.size / blockDevice.blockSize)
+            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                newIsoFile.write(offset, ByteBuffer.wrap(buffer, 0, bytesRead))
+                offset += bytesRead
+            }
+
+            newIsoFile.flush()
+            inputStream.close()
+            device.close()
+            
+            runOnUiThread { 
+                statusText.text = "Готово! Образ успешно записан на флешку." 
+            }
+        } catch (e: Exception) {
+            runOnUiThread { 
+                statusText.text = "Ошибка записи: ${e.message}" 
+            }
         }
-
-        ventoyImageStream.close()
-        device.close()
-        runOnUiThread { statusText.text = "Готово! Загрузчик записан." }
-    } catch (e: Exception) {
-        runOnUiThread { statusText.text = "Ошибка записи: ${e.message}" }
-    }
-}
-
-
-
-    // Метод для прямой переброски ISO-файла во второй раздел флешки
-    fun copyIsoDirectlyToSecondPartition(isoUri: Uri) {
-        val devices = UsbMassStorageDevice.getMassStorageDevices(this)
-        if (devices.isEmpty()) return
-
-        val device = devices[0]
-        device.init()
-
-        // Хитрость против бага в 34 МБ: 
-        // partitions[0] — это маленький VTOYEFI (34 МБ), который видит Android.
-        // partitions[1] — это наш основной раздел на 29 ГБ! Обращаемся сразу к нему:
-        val mainPartitionFs = device.partitions[1].fileSystem
-        val rootDir = mainPartitionFs.rootDirectory
-
-        val inputStream = contentResolver.openInputStream(isoUri) ?: return
-        val newIsoFile = rootDir.createFile("Windows11.iso")
-
-        // Перекачиваем гигабайты напрямую с памяти телефона в обход лимитов системы
-        val buffer = ByteArray(1024 * 64) // Буфер 64 КБ для быстрой скорости
-        var offset = 0L
-        var bytesRead: Int
-
-        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-            newIsoFile.write(offset, ByteBuffer.wrap(buffer, 0, bytesRead))
-            offset += bytesRead
-        }
-
-        newIsoFile.flush()
-        inputStream.close()
-        device.close()
-        statusText.text = "Образ Windows11.iso успешно записан на 29 ГБ раздел!"
     }
 }
