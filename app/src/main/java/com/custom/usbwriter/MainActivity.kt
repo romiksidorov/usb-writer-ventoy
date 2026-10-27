@@ -70,7 +70,10 @@ class MainActivity : AppCompatActivity() {
             val blockDevice = device.blockDevices[0]
 
             // Открываем вшитый в приложение образ загрузчика Ventoy (boot.img + efi.img)
-            val ventoyImageStream: InputStream = assets.open("ventoy_core.img")
+            val zipStream = java.util.zip.ZipInputStream(assets.open("ventoy_core.zip"))
+            zipStream.nextEntry
+            val ventoyImageStream: InputStream = zipStream
+
             val buffer = ByteArray(4096) // Пишем блоками по 4 КБ (то самое выравнивание 4K)
             var currentSectorOffset = 0L
 
